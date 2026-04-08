@@ -1,10 +1,25 @@
 # FaceIn
 
-Project ini dibuat untuk memenuhi tugas mata kuliah **Jaringan Syaraf Komputer** — Universitas Indraprasta PGRI.
+Project ini dibuat untuk memenuhi tugas mata kuliah **Jaringan Syaraf Komputer** - Universitas Indraprasta PGRI.
 
 Apa itu FaceIn? FaceIn adalah sistem absensi otomatis berbasis pengenalan wajah dan verifikasi ekspresi. Mahasiswa melakukan absensi melalui webcam jadi sistem mendeteksi wajah, mengenali identitas, dan memverifikasi kehadiran dengan meminta senyuman sebelum absensi dicatat.
 
 Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
+
+---
+
+## Daftar Isi
+
+- [Tim Pengembang](#tim-pengembang)
+- [Fitur Utama](#fitur-utama)
+- [Teknologi & Tools](#teknologi--tools)
+- [Model AI yang Digunakan](#model-ai-yang-digunakan)
+- [Alur Kerja Absensi](#alur-kerja-absensi)
+- [Cara Instalasi](#cara-instalasi)
+- [Cara Daftar Mahasiswa Baru](#cara-daftar-mahasiswa-baru)
+- [Mengelola faces_db Secara Manual](#mengelola-faces_db-secara-manual)
+- [Konfigurasi (.env)](#konfigurasi-env)
+- [Struktur Folder](#struktur-folder)
 
 ---
 
@@ -20,12 +35,12 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 
 ## Fitur Utama
 
-- **Deteksi wajah real-time** — bounding box langsung muncul di kamera menggunakan YOLOv8
-- **Pengenalan wajah** — identifikasi mahasiswa menggunakan DeepFace (Facenet512)
-- **Liveness check / anti-spoofing** — wajib tersenyum sebelum absensi dicatat, mencegah penggunaan foto
-- **Absen masuk & keluar** — scan pertama = masuk, scan kedua di hari yang sama = keluar
-- **Rekap absensi** — tabel rekap harian dan statistik kehadiran per mahasiswa
-- **Manajemen mahasiswa** — tambah, hapus, dan update foto wajah mahasiswa
+- **Deteksi wajah real-time** - bounding box langsung muncul di kamera menggunakan YOLOv8
+- **Pengenalan wajah** - identifikasi mahasiswa menggunakan DeepFace (Facenet512)
+- **Liveness check / anti-spoofing** - wajib tersenyum sebelum absensi dicatat, mencegah penggunaan foto
+- **Absen masuk & keluar** - scan pertama = masuk, scan kedua di hari yang sama = keluar
+- **Rekap absensi** - tabel rekap harian dan statistik kehadiran per mahasiswa
+- **Manajemen mahasiswa** - tambah, hapus, dan update foto wajah mahasiswa
 
 ---
 
@@ -74,7 +89,7 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 
 **YOLOv8n-face** digunakan untuk mendeteksi wajah secara real-time. Hasilnya berupa bounding box yang ditampilkan di kamera sekaligus digunakan untuk crop area wajah sebelum masuk ke proses pengenalan. Hanya deteksi dengan confidence ≥ 0.5 yang diproses.
 
-**Facenet512** adalah model pengenalan wajah yang mengubah gambar wajah menjadi vektor 512 dimensi (embedding). Vektor ini dibandingkan dengan semua foto di `faces_db/` menggunakan cosine distance — jika jarak terkecil masih di bawah `FACE_MATCH_TOLERANCE` (default `0.45`), wajah dianggap cocok dan identitas mahasiswa dikembalikan.
+**Facenet512** adalah model pengenalan wajah yang mengubah gambar wajah menjadi vektor 512 dimensi (embedding). Vektor ini dibandingkan dengan semua foto di `faces_db/` menggunakan cosine distance - jika jarak terkecil masih di bawah `FACE_MATCH_TOLERANCE` (default `0.45`), wajah dianggap cocok dan identitas mahasiswa dikembalikan.
 
 **YOLO Emotion** (`emotion_best.pt`) digunakan sebagai liveness check agar absensi tidak bisa ditipu dengan foto. Model ini mendeteksi 7 ekspresi (`angry`, `disgust`, `fear`, `happy`, `neutral`, `sad`, `surprise`). Absensi baru dicatat setelah kelas `happy` terdeteksi dengan confidence ≥ 0.80 pada 3 frame berturut-turut (sekitar 0.6 detik).
 
@@ -84,19 +99,19 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 
 Berikut adalah penjelasan lengkap apa yang terjadi dari awal hingga absensi berhasil dicatat:
 
-### Langkah 1 — Tekan Tombol "Scan Wajah"
+### Langkah 1 - Tekan Tombol "Scan Wajah"
 
 Mahasiswa menekan tombol **Scan Wajah** di halaman absensi. Browser langsung mengambil satu gambar (screenshot) dari webcam dan mengirimkannya ke server.
 
-### Langkah 2 — Pengenalan Wajah
+### Langkah 2 - Pengenalan Wajah
 
 Server menerima gambar tersebut dan mulai memproses:
 
-1. **Deteksi wajah** — Model YOLOv8 mencari posisi wajah dalam gambar dan memotong (crop) area wajah saja, membuang latar belakang.
-2. **Pengenalan identitas** — Wajah hasil crop dianalisis oleh Facenet512 untuk menghasilkan "sidik jari digital" wajah (vektor 512 angka). Sidik jari ini lalu dibandingkan dengan semua foto mahasiswa yang sudah terdaftar di database.
-3. **Keputusan** — Jika ada kecocokan (jarak cosine ≤ 0.45), server mengembalikan nama dan data mahasiswa yang cocok. Jika tidak ada yang cocok, muncul pesan *"Wajah tidak dikenali"* dan proses berhenti.
+1. **Deteksi wajah** - Model YOLOv8 mencari posisi wajah dalam gambar dan memotong (crop) area wajah saja, membuang latar belakang.
+2. **Pengenalan identitas** - Wajah hasil crop dianalisis oleh Facenet512 untuk menghasilkan "sidik jari digital" wajah (vektor 512 angka). Sidik jari ini lalu dibandingkan dengan semua foto mahasiswa yang sudah terdaftar di database.
+3. **Keputusan** - Jika ada kecocokan (jarak cosine ≤ 0.45), server mengembalikan nama dan data mahasiswa yang cocok. Jika tidak ada yang cocok, muncul pesan *"Wajah tidak dikenali"* dan proses berhenti.
 
-### Langkah 3 — Verifikasi Senyum (Liveness Check)
+### Langkah 3 - Verifikasi Senyum (Liveness Check)
 
 Setelah wajah dikenali, nama mahasiswa ditampilkan di layar dan sistem meminta mahasiswa untuk **tersenyum**. Ini dilakukan untuk memastikan yang absen adalah orang sungguhan, bukan foto.
 
@@ -104,7 +119,7 @@ Kamera terus-menerus mengambil gambar setiap 200ms dan mengirimkannya ke server.
 
 Jika dalam 30 detik belum ada senyum yang terdeteksi, proses dibatalkan otomatis dan mahasiswa diminta mengulang dari awal.
 
-### Langkah 4 — Pencatatan Absensi
+### Langkah 4 - Pencatatan Absensi
 
 Setelah senyum terverifikasi, sistem mencatat kehadiran ke database:
 
@@ -112,7 +127,7 @@ Setelah senyum terverifikasi, sistem mencatat kehadiran ke database:
 - **Scan kedua** di hari yang sama → dicatat sebagai **Absen Keluar**
 - **Scan ketiga** dan seterusnya di hari yang sama → ditolak (sudah absen lengkap)
 
-### Langkah 5 — Hasil & Cooldown
+### Langkah 5 - Hasil & Cooldown
 
 Hasil absensi (nama, jenis absen, jam) ditampilkan di panel kanan. Tombol Scan Wajah nonaktif selama **5 detik** (cooldown) untuk mencegah scan berulang secara tidak sengaja.
 
@@ -178,6 +193,74 @@ Foto disimpan di `backend/faces_db/<id_mahasiswa>/`
 - Pencahayaan dari depan, tidak backlight
 - Satu wajah per foto, resolusi minimal 200×200 px
 - Upload beberapa foto dari sudut berbeda untuk akurasi lebih tinggi
+
+---
+
+## Mengelola `faces_db` Secara Manual
+
+`faces_db/` adalah folder tempat foto wajah mahasiswa disimpan. Setiap mahasiswa memiliki subfolder sendiri berdasarkan ID-nya yang dibuat otomatis saat mahasiswa didaftarkan melalui UI.
+
+> **Note penting:** Sistem ini **tidak melatih model AI**. DeepFace Facenet512 adalah model pre-trained yang sudah jadi. Foto yang diupload hanya digunakan sebagai **referensi pencocokan** - semakin banyak foto, semakin banyak referensi yang tersedia, sehingga pengenalan makin akurat. Menambah foto bukan training, melainkan enrollment.
+
+### Struktur folder
+
+```
+backend/faces_db/
+├── 1/
+│   ├── tobi.jpg
+│   └── tobi2.jpg
+├── 2/
+│   └── iihab.jpg
+└── 3/
+    ├── zulfahmi1.jpg
+    ├── zulfahmi2.jpg
+    └── zulfahmi3.jpg
+```
+
+### Tambah foto secara manual
+
+Selain upload melalui UI, foto juga bisa ditambahkan langsung ke folder. Cukup salin file foto ke subfolder ID mahasiswa yang sesuai:
+
+```bash
+# Contoh: tambah foto untuk mahasiswa dengan ID 1
+cp foto_baru.jpg backend/faces_db/1/
+```
+
+Format yang didukung: `.jpg`, `.jpeg`, `.png`
+
+> **Penting:** Setelah menambah foto secara manual, hapus file cache DeepFace (`.pkl`) di dalam `faces_db/` agar foto baru ikut digunakan saat pengenalan:
+> ```bash
+> del backend\faces_db\*.pkl
+> ```
+> Cache ini dibuat otomatis oleh DeepFace dan akan diperbarui pada scan berikutnya. Jika tidak dihapus, foto yang baru ditambahkan secara manual tidak akan dikenali.
+
+### Hapus foto
+
+```bash
+# Hapus satu foto
+rm backend/faces_db/1/foto_lama.jpg
+
+# Hapus semua foto mahasiswa ID 1 - mahasiswa tidak akan bisa dikenali
+rm -rf backend/faces_db/1/
+```
+
+> Menghapus folder tidak menghapus data absensi dari database. Rekap tetap tersimpan di `absensi.db`.
+
+### Reset semua data wajah
+
+```bash
+rm -rf backend/faces_db/*
+```
+
+Setelah reset, daftarkan ulang mahasiswa melalui menu **Mahasiswa** di web.
+
+### Meningkatkan akurasi pengenalan
+
+Disarankan upload minimal **3–5 foto** per mahasiswa dengan variasi sudut dan pencahayaan. Jika pengenalan sering gagal, coba:
+
+1. Tambah lebih banyak foto dari berbagai sudut
+2. Naikkan nilai `FACE_MATCH_TOLERANCE` di `.env` (default `0.45`, maksimal sekitar `0.6`)
+3. Pastikan foto memiliki wajah yang jelas, tidak blur, dan pencahayaan cukup
 
 ---
 
