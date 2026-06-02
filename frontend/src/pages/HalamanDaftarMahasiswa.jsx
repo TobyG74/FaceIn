@@ -1,5 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { getMahasiswa, tambahMahasiswa, hapusMahasiswa } from '../api'
+import KameraEnroll from '../components/KameraEnroll'
+
+const JUMLAH_FOTO = 3
 
 export default function HalamanDaftarMahasiswa() {
   const [mahasiswaList, setMahasiswaList] = useState([])
@@ -9,9 +12,9 @@ export default function HalamanDaftarMahasiswa() {
 
   // state form tambah mahasiswa
   const [form, setForm] = useState({ nama: '', npm: '', jabatan: '' })
-  const [foto, setFoto] = useState(null)
+  const [fotoList, setFotoList] = useState([])   // array blob dari kamera (3 jarak)
   const [submitting, setSubmitting] = useState(false)
-  const fileRef = useRef()
+  const [kameraKey, setKameraKey] = useState(0)  // ganti key buat reset komponen kamera
 
   const muat = async () => {
     try {
@@ -28,7 +31,10 @@ export default function HalamanDaftarMahasiswa() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!foto) { setPesan({ tipe: 'error', teks: 'Foto wajah wajib diisi.' }); return }
+    if (fotoList.length < JUMLAH_FOTO) {
+      setPesan({ tipe: 'error', teks: `Ambil ${JUMLAH_FOTO} foto wajah dulu lewat kamera.` })
+      return
+    }
 
     setSubmitting(true)
     setPesan(null)
@@ -37,14 +43,14 @@ export default function HalamanDaftarMahasiswa() {
     formData.append('nama', form.nama)
     formData.append('npm', form.npm)
     formData.append('jabatan', form.jabatan)
-    formData.append('foto', foto)
+    fotoList.forEach((blob, i) => formData.append('foto', blob, `wajah_${i + 1}.jpg`))
 
     try {
       await tambahMahasiswa(formData)
       setPesan({ tipe: 'success', teks: 'Mahasiswa berhasil ditambahkan.' })
       setForm({ nama: '', npm: '', jabatan: '' })
-      setFoto(null)
-      fileRef.current.value = ''
+      setFotoList([])
+      setKameraKey(k => k + 1)
       setShowForm(false)
       muat()
     } catch (err) {
@@ -56,10 +62,10 @@ export default function HalamanDaftarMahasiswa() {
   }
 
   const handleHapus = async (id, nama) => {
-    if (!window.confirm(`Nonaktifkan mahasiswa "${nama}"?`)) return
+    if (!window.confirm(`Hapus permanen mahasiswa "${nama}"?`)) return
     try {
       await hapusMahasiswa(id)
-      setPesan({ tipe: 'success', teks: `${nama} berhasil dinonaktifkan.` })
+      setPesan({ tipe: 'success', teks: `${nama} berhasil dihapus.` })
       muat()
     } catch {
       setPesan({ tipe: 'error', teks: 'Gagal menghapus mahasiswa.' })
@@ -118,18 +124,17 @@ export default function HalamanDaftarMahasiswa() {
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Foto Wajah * (gunakan foto yang jelas, satu wajah)</label>
-              <input
-                type="file"
-                accept="image/*"
-                className="form-input"
-                ref={fileRef}
-                onChange={(e) => setFoto(e.target.files[0])}
-                required
-              />
+              <label className="form-label">
+                Foto Wajah * — ambil {JUMLAH_FOTO} foto otomatis dari kamera (jauh, sedang, dekat)
+              </label>
+              <KameraEnroll key={kameraKey} onChange={setFotoList} />
             </div>
-            <button className="btn btn-success" type="submit" disabled={submitting}>
-              {submitting ? 'Menyimpan...' : 'Simpan Mahasiswa'}
+            <button className="btn btn-success" type="submit" disabled={submitting || fotoList.length < JUMLAH_FOTO}>
+              {submitting
+                ? 'Menyimpan...'
+                : fotoList.length < JUMLAH_FOTO
+                  ? `Ambil ${JUMLAH_FOTO} foto dulu (${fotoList.length}/${JUMLAH_FOTO})`
+                  : 'Simpan Mahasiswa'}
             </button>
           </form>
         </div>
@@ -177,7 +182,7 @@ export default function HalamanDaftarMahasiswa() {
                         style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
                         onClick={() => handleHapus(m.id, m.nama)}
                       >
-                        Nonaktifkan
+                        Hapus
                       </button>
                     </td>
                   </tr>

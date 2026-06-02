@@ -79,14 +79,13 @@ export default function HalamanAbsensi() {
           : '#22c55e'
 
         data.kotak?.forEach(k => {
-          const PAD_TOP    = 0
-          const PAD_LEFT   = -80
-          const PAD_RIGHT  = 170
-          const PAD_BOTTOM = 100
-          const bx = k.x - PAD_LEFT
-          const by = k.y - PAD_TOP
-          const bw = k.w + PAD_LEFT + PAD_RIGHT
-          const bh = k.h + PAD_TOP  + PAD_BOTTOM
+          // sedikit padding simetris (5% dari ukuran kotak) biar wajah ga kepotong mepet
+          const padX = k.w * 0.05
+          const padY = k.h * 0.05
+          const bx = k.x - padX
+          const by = k.y - padY
+          const bw = k.w + padX * 2
+          const bh = k.h + padY * 2
 
           ctx.strokeStyle = warna
           ctx.lineWidth   = 3
@@ -342,12 +341,13 @@ export default function HalamanAbsensi() {
             <i className="fa-solid fa-video" style={{ marginRight: '0.5rem' }} />Kamera
           </div>
           <div className="webcam-container">
-            <div style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
+            <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '480px', lineHeight: 0 }}>
               <Webcam
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
                 className="webcam-video"
                 mirrored={true}
+                forceScreenshotSourceSize={true}
               />
               <canvas
                 ref={canvasRef}
