@@ -4,6 +4,7 @@ const api = axios.create({
   baseURL: '/api',
 })
 
+// ---------- Mahasiswa ----------
 export const getMahasiswa = () => api.get('/mahasiswa/')
 export const getDetailMahasiswa = (id) => api.get(`/mahasiswa/${id}`)
 
@@ -19,13 +20,19 @@ export const updateFotoMahasiswa = (id, formData) =>
 
 export const hapusMahasiswa = (id) => api.delete(`/mahasiswa/${id}`)
 
-export const scanAbsensi = (formData) =>
-  api.post('/absensi/scan', formData, {
+// ---------- Sesi meeting ----------
+export const getSesiList = () => api.get('/sesi/')
+export const getSesiDetail = (id) => api.get(`/sesi/${id}`)
+export const buatSesi = (data) => api.post('/sesi/', data)
+export const hapusSesi = (id) => api.delete(`/sesi/${id}`)
+export const getKehadiranSesi = (id) => api.get(`/sesi/${id}/kehadiran`)
+
+export const scanSesi = (sesiId, formData) =>
+  api.post(`/sesi/${sesiId}/scan`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 
-export const getAbsensiHariIni = () => api.get('/absensi/hari-ini')
-
+// ---------- Rekap & statistik ----------
 export const getRekapAbsensi = (params) =>
   api.get('/absensi/rekap', { params })
 
@@ -33,13 +40,3 @@ export const getStatistikAbsensi = (params) =>
   api.get('/absensi/statistik', { params })
 
 export const hapusAbsensi = (id) => api.delete(`/absensi/${id}`)
-
-export const kenaliWajah = (formData) =>
-  api.post('/absensi/kenali', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-
-export const cekSenyum = (formData) =>
-  api.post('/absensi/cek-senyum', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })

@@ -1,58 +1,48 @@
 import { useState, useEffect } from 'react'
-import { getRekapAbsensi, getAbsensiHariIni, getStatistikAbsensi, getMahasiswa, hapusAbsensi } from '../api'
+import {
+  getRekapAbsensi, getStatistikAbsensi, getMahasiswa,
+  getSesiList, hapusAbsensi, hapusSesi,
+} from '../api'
 import { format } from 'date-fns'
 import { id as localeId } from 'date-fns/locale'
 
 export default function HalamanRekap() {
-  const [absensiHariIni, setAbsensiHariIni] = useState([])
-  const [rekap, setRekap] = useState([])
-  const [statistik, setStatistik] = useState({})
+  const [statistik,    setStatistik]    = useState({})
+  const [sesiList,     setSesiList]      = useState([])
   const [mahasiswaList, setMahasiswaList] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [rekap,        setRekap]         = useState([])
+  const [loading,      setLoading]       = useState(false)
 
-  // state filter rekap
   const [filter, setFilter] = useState({
+    sesi_id: '',
+    mahasiswa_id: '',
     tanggal_mulai: '',
     tanggal_selesai: '',
-    mahasiswa_id: '',
     bulan: new Date().getMonth() + 1,
     tahun: new Date().getFullYear(),
   })
 
-  // load absensi hari ini + statistik pas halaman dibuka
-  useEffect(() => {
-    const init = async () => {
-      const [hariIniRes, statsRes, mahRes] = await Promise.all([
-        getAbsensiHariIni(),
-        getStatistikAbsensi({ bulan: filter.bulan, tahun: filter.tahun }),
-        getMahasiswa(),
-      ])
-      setAbsensiHariIni(hariIniRes.data)
-      setStatistik(statsRes.data)
-      setMahasiswaList(mahRes.data)
-    }
-    init()
-  }, [])
-
-  const handleHapusAbsensi = async (id) => {
-    if (!window.confirm('Hapus data absensi ini?')) return
-    try {
-      await hapusAbsensi(id)
-      setAbsensiHariIni(prev => prev.filter(a => a.id !== id))
-      setRekap(prev => prev.filter(a => a.id !== id))
-    } catch {
-      alert('Gagal menghapus data absensi.')
-    }
+  const muatAwal = async () => {
+    const [statsRes, sesiRes, mahRes] = await Promise.all([
+      getStatistikAbsensi({ bulan: filter.bulan, tahun: filter.tahun }),
+      getSesiList(),
+      getMahasiswa(),
+    ])
+    setStatistik(statsRes.data)
+    setSesiList(sesiRes.data)
+    setMahasiswaList(mahRes.data)
   }
+
+  useEffect(() => { muatAwal() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const cariRekap = async () => {
     setLoading(true)
     try {
       const params = {}
+      if (filter.sesi_id) params.sesi_id = filter.sesi_id
+      if (filter.mahasiswa_id) params.mahasiswa_id = filter.mahasiswa_id
       if (filter.tanggal_mulai) params.tanggal_mulai = filter.tanggal_mulai
       if (filter.tanggal_selesai) params.tanggal_selesai = filter.tanggal_selesai
-      if (filter.mahasiswa_id) params.mahasiswa_id = filter.mahasiswa_id
-
       const res = await getRekapAbsensi(params)
       setRekap(res.data)
     } finally {
@@ -60,34 +50,40 @@ export default function HalamanRekap() {
     }
   }
 
-  const formatWaktu = (dt) => {
-    if (!dt) return '-'
-    return format(new Date(dt), 'HH:mm', { locale: localeId })
+  const handleHapusAbsensi = async (id) => {
+    if (!window.confirm('Hapus data kehadiran ini?')) return
+    try {
+      await hapusAbsensi(id)
+      setRekap(prev => prev.filter(a => a.id !== id))
+    } catch {
+      alert('Gagal menghapus data kehadiran.')
+    }
   }
 
-  const formatTanggal = (tgl) => {
-    if (!tgl) return '-'
-    return format(new Date(tgl), 'dd MMM yyyy', { locale: localeId })
+  const handleHapusSesi = async (id) => {
+    if (!window.confirm('Hapus sesi ini beserta semua data kehadirannya?')) return
+    try {
+      await hapusSesi(id)
+      setSesiList(prev => prev.filter(s => s.id !== id))
+      setRekap(prev => prev.filter(a => a.sesi_id !== id))
+    } catch {
+      alert('Gagal menghapus sesi.')
+    }
   }
 
-  // hitung durasi dari jam masuk sampe keluar
-  const hitungDurasi = (masuk, keluar) => {
-    if (!masuk || !keluar) return '-'
-    const selisihMs = new Date(keluar) - new Date(masuk)
-    const jam = Math.floor(selisihMs / 3600000)
-    const menit = Math.floor((selisihMs % 3600000) / 60000)
-    return `${jam}j ${menit}m`
-  }
+  const formatWaktu   = (dt) => dt ? format(new Date(dt), 'HH:mm', { locale: localeId }) : '-'
+  const formatTanggal = (dt) => dt ? format(new Date(dt), 'dd MMM yyyy', { locale: localeId }) : '-'
+  const namaSesi      = (id) => sesiList.find(s => s.id === id)?.nama || `Sesi #${id}`
 
   return (
     <div>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '1.5rem', color: '#1e3a8a' }}>
-        <i className="fa-solid fa-chart-bar" style={{marginRight:'0.5rem'}}></i>Rekap &amp; Statistik Absensi
+        <i className="fa-solid fa-chart-bar" style={{ marginRight: '0.5rem' }} />Rekap &amp; Statistik Kehadiran
       </h1>
 
-      {/* statistik bulan ini */}
+      {/* statistik */}
       <div className="card">
-        <div className="card-title"><i className="fa-solid fa-chart-pie" style={{marginRight:'0.5rem'}}></i>Statistik Bulan Ini</div>
+        <div className="card-title"><i className="fa-solid fa-chart-pie" style={{ marginRight: '0.5rem' }} />Statistik Bulan Ini</div>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           {[
             { label: 'Hadir', key: 'hadir', color: '#dcfce7', text: '#15803d' },
@@ -103,37 +99,29 @@ export default function HalamanRekap() {
         </div>
       </div>
 
-      {/* absensi hari ini */}
+      {/* daftar sesi */}
       <div className="card">
-        <div className="card-title"><i className="fa-solid fa-calendar-day" style={{marginRight:'0.5rem'}}></i>Absensi Hari Ini ({format(new Date(), 'dd MMMM yyyy', { locale: localeId })})</div>
-        {absensiHariIni.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>Belum ada yang absen hari ini.</p>
+        <div className="card-title"><i className="fa-solid fa-calendar-days" style={{ marginRight: '0.5rem' }} />Daftar Sesi Meeting</div>
+        {sesiList.length === 0 ? (
+          <p style={{ color: '#6b7280' }}>Belum ada sesi. Buat sesi di halaman Absensi.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="tabel">
-              <thead>
-                <tr>
-                  <th>Nama</th>
-                  <th>NPM</th>
-                  <th>Jam Masuk</th>
-                  <th>Jam Keluar</th>
-                  <th>Durasi</th>
-                  <th>Status</th>
-                  <th>Aksi</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Nama Sesi</th><th>Tanggal</th><th>Jumlah Hadir</th><th>Aksi</th></tr></thead>
               <tbody>
-                {absensiHariIni.map((a) => (
-                  <tr key={a.id}>
-                    <td style={{ fontWeight: 600 }}>{a.mahasiswa.nama}</td>
-                    <td>{a.mahasiswa.npm}</td>
-                    <td>{formatWaktu(a.jam_masuk)}</td>
-                    <td>{formatWaktu(a.jam_keluar)}</td>
-                    <td>{hitungDurasi(a.jam_masuk, a.jam_keluar)}</td>
-                    <td><span className={`badge badge-${a.status}`}>{a.status}</span></td>
-                    <td>
-                      <button className="btn btn-danger" style={{padding:'0.25rem 0.6rem',fontSize:'0.8rem'}} onClick={() => handleHapusAbsensi(a.id)}>
-                        <i className="fa-solid fa-trash"></i>
+                {sesiList.map(s => (
+                  <tr key={s.id}>
+                    <td style={{ fontWeight: 600 }}>{s.nama}</td>
+                    <td>{formatTanggal(s.tanggal)}</td>
+                    <td><span className="badge badge-hadir">{s.jumlah_hadir} hadir</span></td>
+                    <td style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button className="btn" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', border: '1px solid #d1d5db' }}
+                        onClick={() => { setFilter(f => ({ ...f, sesi_id: String(s.id) })); }}>
+                        <i className="fa-solid fa-filter" />
+                      </button>
+                      <button className="btn btn-danger" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                        onClick={() => handleHapusSesi(s.id)}>
+                        <i className="fa-solid fa-trash" />
                       </button>
                     </td>
                   </tr>
@@ -146,42 +134,35 @@ export default function HalamanRekap() {
 
       {/* filter rekap */}
       <div className="card">
-        <div className="card-title"><i className="fa-solid fa-filter" style={{marginRight:'0.5rem'}}></i>Cari Rekap</div>
+        <div className="card-title"><i className="fa-solid fa-filter" style={{ marginRight: '0.5rem' }} />Cari Rekap Kehadiran</div>
+        <div className="grid-2" style={{ marginBottom: '1rem' }}>
+          <div className="form-group">
+            <label className="form-label">Sesi</label>
+            <select className="form-input" value={filter.sesi_id} onChange={(e) => setFilter({ ...filter, sesi_id: e.target.value })}>
+              <option value="">Semua Sesi</option>
+              {sesiList.map(s => <option key={s.id} value={s.id}>{s.nama} — {formatTanggal(s.tanggal)}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Mahasiswa</label>
+            <select className="form-input" value={filter.mahasiswa_id} onChange={(e) => setFilter({ ...filter, mahasiswa_id: e.target.value })}>
+              <option value="">Semua Mahasiswa</option>
+              {mahasiswaList.map(m => <option key={m.id} value={m.id}>{m.nama} — {m.npm}</option>)}
+            </select>
+          </div>
+        </div>
         <div className="grid-2" style={{ marginBottom: '1rem' }}>
           <div className="form-group">
             <label className="form-label">Tanggal Mulai</label>
-            <input
-              type="date"
-              className="form-input"
-              value={filter.tanggal_mulai}
-              onChange={(e) => setFilter({ ...filter, tanggal_mulai: e.target.value })}
-            />
+            <input type="date" className="form-input" value={filter.tanggal_mulai} onChange={(e) => setFilter({ ...filter, tanggal_mulai: e.target.value })} />
           </div>
           <div className="form-group">
             <label className="form-label">Tanggal Selesai</label>
-            <input
-              type="date"
-              className="form-input"
-              value={filter.tanggal_selesai}
-              onChange={(e) => setFilter({ ...filter, tanggal_selesai: e.target.value })}
-            />
+            <input type="date" className="form-input" value={filter.tanggal_selesai} onChange={(e) => setFilter({ ...filter, tanggal_selesai: e.target.value })} />
           </div>
         </div>
-        <div className="form-group">
-          <label className="form-label">Filter Mahasiswa</label>
-          <select
-            className="form-input"
-            value={filter.mahasiswa_id}
-            onChange={(e) => setFilter({ ...filter, mahasiswa_id: e.target.value })}
-          >
-            <option value="">Semua Mahasiswa</option>
-            {mahasiswaList.map((m) => (
-              <option key={m.id} value={m.id}>{m.nama} — {m.npm}</option>
-            ))}
-          </select>
-        </div>
         <button className="btn btn-primary" onClick={cariRekap} disabled={loading}>
-          {loading ? <><i className="fa-solid fa-spinner fa-spin" style={{marginRight:'0.4rem'}}></i>Memuat...</> : <><i className="fa-solid fa-magnifying-glass" style={{marginRight:'0.4rem'}}></i>Cari</>}
+          {loading ? <><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '0.4rem' }} />Memuat...</> : <><i className="fa-solid fa-magnifying-glass" style={{ marginRight: '0.4rem' }} />Cari</>}
         </button>
       </div>
 
@@ -191,31 +172,18 @@ export default function HalamanRekap() {
           <div className="card-title">Hasil Rekap ({rekap.length} data)</div>
           <div style={{ overflowX: 'auto' }}>
             <table className="tabel">
-              <thead>
-                <tr>
-                  <th>Tanggal</th>
-                  <th>Nama</th>
-                  <th>NPM</th>
-                  <th>Masuk</th>
-                  <th>Keluar</th>
-                  <th>Durasi</th>
-                  <th>Status</th>
-                  <th>Aksi</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Sesi</th><th>Nama</th><th>NPM</th><th>Waktu Hadir</th><th>Status</th><th>Aksi</th></tr></thead>
               <tbody>
-                {rekap.map((a) => (
+                {rekap.map(a => (
                   <tr key={a.id}>
-                    <td>{formatTanggal(a.tanggal)}</td>
+                    <td>{namaSesi(a.sesi_id)}</td>
                     <td style={{ fontWeight: 600 }}>{a.mahasiswa.nama}</td>
                     <td>{a.mahasiswa.npm}</td>
-                    <td>{formatWaktu(a.jam_masuk)}</td>
-                    <td>{formatWaktu(a.jam_keluar)}</td>
-                    <td>{hitungDurasi(a.jam_masuk, a.jam_keluar)}</td>
+                    <td>{formatTanggal(a.waktu_hadir)} {formatWaktu(a.waktu_hadir)}</td>
                     <td><span className={`badge badge-${a.status}`}>{a.status}</span></td>
                     <td>
-                      <button className="btn btn-danger" style={{padding:'0.25rem 0.6rem',fontSize:'0.8rem'}} onClick={() => handleHapusAbsensi(a.id)}>
-                        <i className="fa-solid fa-trash"></i>
+                      <button className="btn btn-danger" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }} onClick={() => handleHapusAbsensi(a.id)}>
+                        <i className="fa-solid fa-trash" />
                       </button>
                     </td>
                   </tr>

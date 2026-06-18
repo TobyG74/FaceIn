@@ -2,9 +2,9 @@
 
 Project ini dibuat untuk memenuhi tugas mata kuliah **Jaringan Syaraf Komputer** - Universitas Indraprasta PGRI.
 
-Apa itu FaceIn? FaceIn adalah sistem absensi otomatis berbasis pengenalan wajah dan verifikasi ekspresi. Mahasiswa melakukan absensi melalui webcam jadi sistem mendeteksi wajah, mengenali identitas, dan memverifikasi kehadiran dengan meminta senyuman sebelum absensi dicatat.
+Apa itu FaceIn? FaceIn adalah sistem absensi otomatis untuk **meeting online (Google Meet / Zoom)**. Dosen/operator membagikan layar window meeting, lalu sistem mendeteksi **semua wajah peserta yang tampil di grid sekaligus** dalam satu kali scan, mengenali identitas tiap wajah menggunakan pengenalan wajah, dan menandai mereka **hadir** pada sesi meeting tersebut.
 
-Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
+Berbeda dari kiosk yang memindai satu orang per scan, FaceIn versi ini memproses **banyak wajah dalam satu frame** — cocok untuk mengecek kehadiran kelas online dengan cepat.
 
 ---
 
@@ -35,12 +35,13 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 
 ## Fitur Utama
 
-- **Deteksi wajah real-time** - bounding box langsung muncul di kamera menggunakan YOLOv8
-- **Pengenalan wajah** - identifikasi mahasiswa menggunakan DeepFace (Facenet512)
-- **Liveness check / anti-spoofing** - wajib tersenyum sebelum absensi dicatat, mencegah penggunaan foto
-- **Absen masuk & keluar** - scan pertama = masuk, scan kedua di hari yang sama = keluar
-- **Rekap absensi** - tabel rekap harian dan statistik kehadiran per mahasiswa
-- **Manajemen mahasiswa** - tambah, hapus, dan update foto wajah mahasiswa
+- **Capture layar meeting** - bagikan window Google Meet / Zoom langsung dari browser (`getDisplayMedia`)
+- **Deteksi banyak wajah sekaligus** - YOLOv8 mendeteksi seluruh wajah pada grid peserta dalam satu frame
+- **Pengenalan wajah massal** - tiap wajah dicocokkan ke mahasiswa terdaftar menggunakan DeepFace (Facenet512)
+- **Absensi per sesi meeting** - buat sesi (mis. "Pertemuan 5"), tiap peserta dikenali ditandai hadir sekali untuk sesi itu
+- **Overlay nama real-time** - kotak + nama digambar di atas tiap wajah hasil scan (hijau = baru hadir, biru = sudah, merah = tidak dikenali)
+- **Rekap & statistik** - rekap kehadiran per sesi/mahasiswa dan statistik bulanan
+- **Manajemen mahasiswa** - tambah, hapus, dan update foto wajah mahasiswa (enrollment)
 
 ---
 
@@ -71,7 +72,8 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 |---|---|---|
 | React | ^18.3.1 | Library UI utama |
 | Vite | ^5.3.1 | Build tool & dev server |
-| react-webcam | ^7.2.0 | Akses kamera dan screenshot dari browser |
+| react-webcam | ^7.2.0 | Akses kamera saat enrollment foto mahasiswa |
+| `getDisplayMedia` (Web API) | bawaan browser | Tangkap layar/window meeting untuk discan |
 | axios | ^1.7.2 | HTTP client untuk memanggil REST API backend |
 | react-router-dom | ^6.23.1 | Routing antar halaman (SPA) |
 | date-fns | ^3.6.0 | Format tanggal dan waktu |
@@ -83,53 +85,44 @@ Sistem mencatat **jam masuk** dan **jam keluar** setiap mahasiswa secara harian.
 
 | Model | File | Peran |
 |---|---|---|
-| YOLOv8n-face | `yolov8n-face.pt` | Deteksi posisi wajah di frame kamera |
-| Facenet512 (DeepFace) | diunduh otomatis | Pengenalan & pencocokan identitas wajah |
-| YOLO Emotion | `emotion_best.pt` | Deteksi ekspresi wajah untuk liveness check |
+| YOLOv8n-face | `yolov8n-face.pt` | Deteksi posisi **semua** wajah pada grid peserta |
+| Facenet512 (DeepFace) | diunduh otomatis | Pengenalan & pencocokan identitas tiap wajah |
 
-**YOLOv8n-face** digunakan untuk mendeteksi wajah secara real-time. Hasilnya berupa bounding box yang ditampilkan di kamera sekaligus digunakan untuk crop area wajah sebelum masuk ke proses pengenalan. Hanya deteksi dengan confidence ≥ 0.5 yang diproses.
+**YOLOv8n-face** digunakan untuk mendeteksi seluruh wajah dalam satu frame layar meeting. Hasilnya berupa banyak bounding box; tiap box di-crop dan dikirim ke proses pengenalan. Hanya deteksi dengan confidence ≥ 0.4 yang diproses (grid peserta cenderung kecil, jadi ambang sengaja diturunkan).
 
-**Facenet512** adalah model pengenalan wajah yang mengubah gambar wajah menjadi vektor 512 dimensi (embedding). Vektor ini dibandingkan dengan semua foto di `faces_db/` menggunakan cosine distance - jika jarak terkecil masih di bawah `FACE_MATCH_TOLERANCE` (default `0.45`), wajah dianggap cocok dan identitas mahasiswa dikembalikan.
+**Facenet512** mengubah tiap crop wajah menjadi vektor 512 dimensi (embedding) lalu membandingkannya dengan semua foto di `faces_db/` menggunakan cosine distance. Jika jarak terkecil masih di bawah `FACE_MATCH_TOLERANCE` (default `0.35`), wajah dianggap cocok dan mahasiswa ditandai hadir. Pencocokan dilakukan per-wajah, sehingga satu scan bisa menandai banyak peserta sekaligus.
 
-**YOLO Emotion** (`emotion_best.pt`) digunakan sebagai liveness check agar absensi tidak bisa ditipu dengan foto. Model ini mendeteksi 7 ekspresi (`angry`, `disgust`, `fear`, `happy`, `neutral`, `sad`, `surprise`). Absensi baru dicatat setelah kelas `happy` terdeteksi dengan confidence ≥ 0.80 pada 3 frame berturut-turut (sekitar 0.6 detik).
+> Verifikasi senyum (anti-spoofing) dari versi kiosk **dihapus** karena tidak praktis untuk banyak wajah sekaligus. File `emotion_best.pt` tidak lagi dipakai.
 
 ---
 
 ## Alur Kerja Absensi
 
-Berikut adalah penjelasan lengkap apa yang terjadi dari awal hingga absensi berhasil dicatat:
+### Langkah 1 - Buat / Pilih Sesi Meeting
 
-### Langkah 1 - Tekan Tombol "Scan Wajah"
+Di halaman **Absensi**, operator membuat sesi baru (mis. *"Pertemuan 5 - Basis Data"*) atau memilih sesi yang sudah ada. Semua kehadiran dari scan akan dicatat ke sesi yang aktif ini.
 
-Mahasiswa menekan tombol **Scan Wajah** di halaman absensi. Browser langsung mengambil satu gambar (screenshot) dari webcam dan mengirimkannya ke server.
+### Langkah 2 - Bagikan Layar Meeting
 
-### Langkah 2 - Pengenalan Wajah
+Operator menekan **Bagikan Layar**, lalu memilih window Google Meet / Zoom (atau tab/seluruh layar) saat browser meminta. Stream layar tampil sebagai preview di panel kiri. Pastikan **tampilan grid peserta** (galeri) aktif agar banyak wajah terlihat.
 
-Server menerima gambar tersebut dan mulai memproses:
+### Langkah 3 - Tekan "Scan Kehadiran"
 
-1. **Deteksi wajah** - Model YOLOv8 mencari posisi wajah dalam gambar dan memotong (crop) area wajah saja, membuang latar belakang.
-2. **Pengenalan identitas** - Wajah hasil crop dianalisis oleh Facenet512 untuk menghasilkan "sidik jari digital" wajah (vektor 512 angka). Sidik jari ini lalu dibandingkan dengan semua foto mahasiswa yang sudah terdaftar di database.
-3. **Keputusan** - Jika ada kecocokan (jarak cosine ≤ 0.45), server mengembalikan nama dan data mahasiswa yang cocok. Jika tidak ada yang cocok, muncul pesan *"Wajah tidak dikenali"* dan proses berhenti.
+Browser mengambil satu frame dari stream layar (resolusi penuh) dan mengirimkannya ke server. Di server:
 
-### Langkah 3 - Verifikasi Senyum (Liveness Check)
+1. **Deteksi semua wajah** - YOLOv8 menemukan posisi seluruh wajah di frame dan meng-crop tiap area wajah.
+2. **Pengenalan per wajah** - tiap crop diubah Facenet512 menjadi embedding, lalu dibandingkan ke `faces_db/`. Wajah dengan jarak cosine ≤ `FACE_MATCH_TOLERANCE` dianggap cocok.
+3. **Pencatatan kehadiran** - tiap mahasiswa yang dikenali dan **belum** tercatat di sesi ini ditambahkan sebagai **hadir** (sekali per sesi). Wajah yang sudah hadir atau tidak dikenali tidak menambah data baru.
 
-Setelah wajah dikenali, nama mahasiswa ditampilkan di layar dan sistem meminta mahasiswa untuk **tersenyum**. Ini dilakukan untuk memastikan yang absen adalah orang sungguhan, bukan foto.
+### Langkah 4 - Hasil & Overlay
 
-Kamera terus-menerus mengambil gambar setiap 200ms dan mengirimkannya ke server. Server menggunakan model YOLO Emotion untuk mendeteksi apakah ekspresi yang terdeteksi adalah `happy` (senyum) dengan tingkat keyakinan ≥ 80%. Agar absensi tidak mudah terpicu secara tidak sengaja, sistem membutuhkan **3 frame berturut-turut** yang terdeteksi senyum (sekitar 0.6 detik) sebelum lanjut ke langkah berikutnya.
+Server mengembalikan daftar wajah beserta koordinat kotak dan nama. Frontend menggambar overlay di atas preview:
 
-Jika dalam 30 detik belum ada senyum yang terdeteksi, proses dibatalkan otomatis dan mahasiswa diminta mengulang dari awal.
+- 🟢 **Hijau** - mahasiswa baru saja ditandai hadir di scan ini
+- 🔵 **Biru** - mahasiswa dikenali tapi sudah tercatat hadir sebelumnya
+- 🔴 **Merah** - wajah terdeteksi tapi tidak dikenali (belum terdaftar)
 
-### Langkah 4 - Pencatatan Absensi
-
-Setelah senyum terverifikasi, sistem mencatat kehadiran ke database:
-
-- **Scan pertama** di hari tersebut → dicatat sebagai **Absen Masuk** beserta jam saat itu
-- **Scan kedua** di hari yang sama → dicatat sebagai **Absen Keluar**
-- **Scan ketiga** dan seterusnya di hari yang sama → ditolak (sudah absen lengkap)
-
-### Langkah 5 - Hasil & Cooldown
-
-Hasil absensi (nama, jenis absen, jam) ditampilkan di panel kanan. Tombol Scan Wajah nonaktif selama **5 detik** (cooldown) untuk mencegah scan berulang secara tidak sengaja.
+Panel kanan menampilkan ringkasan (jumlah wajah, dikenali, hadir baru) dan daftar peserta yang sudah hadir di sesi. Operator bisa menekan **Scan Kehadiran** berkali-kali selama meeting untuk menjaring peserta yang masuk belakangan.
 
 ---
 
@@ -139,7 +132,8 @@ Hasil absensi (nama, jenis absen, jam) ditampilkan di panel kanan. Tombol Scan W
 
 - Python 3.13+
 - Node.js 18+
-- Webcam
+- Browser modern (Chrome/Edge) yang mendukung screen sharing (`getDisplayMedia`)
+- Sesi Google Meet / Zoom yang sedang berjalan (untuk dibagikan layarnya)
 
 ### 1. Backend
 
@@ -259,8 +253,8 @@ Setelah reset, daftarkan ulang mahasiswa melalui menu **Mahasiswa** di web.
 Disarankan upload minimal **3–5 foto** per mahasiswa dengan variasi sudut dan pencahayaan. Jika pengenalan sering gagal, coba:
 
 1. Tambah lebih banyak foto dari berbagai sudut
-2. Naikkan nilai `FACE_MATCH_TOLERANCE` di `.env` (default `0.45`, maksimal sekitar `0.6`)
-3. Pastikan foto memiliki wajah yang jelas, tidak blur, dan pencahayaan cukup
+2. Naikkan nilai `FACE_MATCH_TOLERANCE` di `.env` (default `0.35`, maksimal sekitar `0.6`) — berguna karena wajah di grid meeting kecil/blur
+3. Gunakan tampilan **galeri/grid** di meeting agar wajah lebih besar dan jelas
 
 ---
 
@@ -274,8 +268,8 @@ DATABASE_URL=sqlite:///./absensi.db
 ALLOWED_ORIGINS=http://localhost:5173
 
 # Cosine distance threshold Facenet512
-# Makin kecil = makin ketat. Naikkan jika sering gagal dikenali.
-FACE_MATCH_TOLERANCE=0.45
+# Makin kecil = makin ketat. Naikkan jika wajah grid meeting sering gagal dikenali.
+FACE_MATCH_TOLERANCE=0.35
 ```
 
 ---
@@ -289,13 +283,14 @@ sistem-absensi/
 │   │   ├── main.py               # Entry point FastAPI, CORS config
 │   │   ├── config.py             # Baca variabel dari .env
 │   │   ├── models/
-│   │   │   ├── database.py       # Tabel SQLAlchemy: Mahasiswa, Absensi
+│   │   │   ├── database.py       # Tabel SQLAlchemy: Mahasiswa, Sesi, Absensi
 │   │   │   └── schemas.py        # Schema Pydantic (request/response)
 │   │   ├── routers/
 │   │   │   ├── mahasiswa.py      # CRUD mahasiswa + upload/update foto
-│   │   │   └── absensi.py        # Endpoint: scan, kenali, cek-senyum, rekap, statistik
+│   │   │   ├── sesi.py           # CRUD sesi meeting + scan multi-wajah + kehadiran
+│   │   │   └── absensi.py        # Endpoint: rekap, statistik, hapus kehadiran
 │   │   └── services/
-│   │       └── face_service.py   # Semua logika AI: YOLO deteksi, DeepFace kenali, YOLO emosi
+│   │       └── face_service.py   # Logika AI: YOLO deteksi banyak wajah, DeepFace kenali per wajah
 │   ├── faces_db/                 # Foto wajah per mahasiswa (subfolder per ID)
 │   ├── models_yolo/
 │   │   ├── yolov8n-face.pt       # Model YOLO deteksi wajah
@@ -307,9 +302,9 @@ sistem-absensi/
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
-│   │   │   ├── HalamanAbsensi.jsx          # Halaman scan (webcam + flow absensi)
-│   │   │   ├── HalamanDaftarMahasiswa.jsx  # CRUD mahasiswa + upload foto
-│   │   │   └── HalamanRekap.jsx            # Rekap harian & statistik kehadiran
+│   │   │   ├── HalamanAbsensi.jsx          # Pilih sesi + share layar meeting + scan multi-wajah
+│   │   │   ├── HalamanDaftarMahasiswa.jsx  # CRUD mahasiswa + upload foto (enrollment)
+│   │   │   └── HalamanRekap.jsx            # Daftar sesi, rekap kehadiran & statistik
 │   │   ├── api/index.js          # Semua pemanggilan REST API ke backend
 │   │   ├── App.jsx               # Router dan layout utama
 │   │   └── index.css             # Styling global

@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from datetime import date, datetime
 from typing import Optional
 
+# ---------- Mahasiswa ----------
 class MahasiswaBase(BaseModel):
     nama: str
     npm: str
@@ -19,24 +20,54 @@ class MahasiswaResponse(MahasiswaBase):
     class Config:
         from_attributes = True
 
-class AbsensiBase(BaseModel):
-    mahasiswa_id: int
-    tanggal: date
-    status: Optional[str] = "hadir"
-    keterangan: Optional[str] = None
 
-class AbsensiResponse(AbsensiBase):
+# ---------- Sesi meeting ----------
+class SesiBuat(BaseModel):
+    nama: str
+    tanggal: Optional[date] = None
+
+class SesiResponse(BaseModel):
     id: int
-    jam_masuk: Optional[datetime]
-    jam_keluar: Optional[datetime]
+    nama: str
+    tanggal: date
+    dibuat_pada: datetime
+    jumlah_hadir: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Kehadiran ----------
+class AbsensiResponse(BaseModel):
+    id: int
+    sesi_id: int
+    waktu_hadir: Optional[datetime]
+    status: str
+    keterangan: Optional[str] = None
     mahasiswa: MahasiswaResponse
 
     class Config:
         from_attributes = True
 
-class HasilAbsensi(BaseModel):
+
+# ---------- Hasil scan multi-wajah ----------
+class KotakWajah(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+class WajahTerdeteksi(BaseModel):
+    box: KotakWajah
+    dikenali: bool
+    baru: bool = False  # True kalau kehadiran baru tercatat di scan ini
+    jarak: Optional[float] = None
+    mahasiswa: Optional[MahasiswaResponse] = None
+
+class HasilScan(BaseModel):
     berhasil: bool
     pesan: str
-    mahasiswa: Optional[MahasiswaResponse] = None
-    jam: Optional[datetime] = None
-    tipe: Optional[str] = None  # "masuk" atau "keluar"
+    jumlah_wajah: int = 0
+    jumlah_dikenali: int = 0
+    hadir_baru: int = 0
+    wajah: list[WajahTerdeteksi] = []

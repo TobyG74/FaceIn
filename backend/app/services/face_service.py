@@ -16,34 +16,29 @@ def get_yolo_model():
     return _yolo_model
 
 
-def deteksi_kotak_wajah(image_array: np.ndarray) -> list:
+def deteksi_kotak_wajah(image_array: np.ndarray, conf_min: float = 0.4) -> list:
+    """deteksi semua kotak wajah di frame (dipakai buat grid peserta meeting)"""
     model = get_yolo_model()
-    hasil = model(image_array, verbose=False, conf=0.5)[0]
+    hasil = model(image_array, verbose=False, conf=conf_min)[0]
     if len(hasil.boxes) == 0:
         return []
     kotak = []
     for box in hasil.boxes:
         conf = float(box.conf[0])
-        if conf < 0.5:
+        if conf < conf_min:
             continue
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
         kotak.append({"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1, "conf": round(conf, 2)})
     return kotak
 
 
-def deteksi_dan_crop_wajah(image_array: np.ndarray) -> np.ndarray:
-    kotak = deteksi_kotak_wajah(image_array)
-    if not kotak:
-        return image_array
-
-    k = max(kotak, key=lambda c: c["w"] * c["h"])
+def _crop_box(image_array: np.ndarray, box: dict, pad: int = 12) -> np.ndarray:
+    """potong satu wajah dari frame berdasarkan kotak deteksi, dengan sedikit padding"""
     H, W = image_array.shape[:2]
-    pad = 20
-    x1 = max(0, k["x"] - pad)
-    y1 = max(0, k["y"] - pad)
-    x2 = min(W, k["x"] + k["w"] + pad)
-    y2 = min(H, k["y"] + k["h"] + pad)
-
+    x1 = max(0, box["x"] - pad)
+    y1 = max(0, box["y"] - pad)
+    x2 = min(W, box["x"] + box["w"] + pad)
+    y2 = min(H, box["y"] + box["h"] + pad)
     return image_array[y1:y2, x1:x2]
 
 
@@ -56,113 +51,79 @@ def hapus_cache_wajah():
             os.remove(os.path.join(FACES_DB_DIR, nama_file))
 
 
-_EMOTION_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "models_yolo", "emotion_best.pt")
-_emotion_model = None
-_EMOTION_HAPPY_IDX = 3   # {0:angry, 1:disgust, 2:fear, 3:happy, 4:neutral, 5:sad, 6:surprise}
-_EMOTION_CONF_THRESHOLD = 0.80
-
-
-def _get_emotion_model():
-    global _emotion_model
-    if _emotion_model is None:
-        _emotion_model = YOLO(_EMOTION_MODEL_PATH)
-    return _emotion_model
-
-
-def cek_senyum(image_bytes: bytes) -> bool:
-    tersenyum, _ = cek_senyum_debug(image_bytes)
-    return tersenyum
-
-
-def cek_senyum_debug(image_bytes: bytes) -> tuple[bool, dict]:
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    gambar_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if gambar_bgr is None:
-        return False, {"error": "decode gagal"}
-
-    hasil = _get_emotion_model()(gambar_bgr, verbose=False, conf=0.3)[0]
-
-    happy_conf = 0.0
-    all_detections = []
-
-    for box in hasil.boxes:
-        cls_id = int(box.cls[0])
-        conf   = float(box.conf[0])
-        all_detections.append({"cls": cls_id, "conf": round(conf, 3)})
-        if cls_id == _EMOTION_HAPPY_IDX:
-            happy_conf = max(happy_conf, conf)
-
-    tersenyum = happy_conf >= _EMOTION_CONF_THRESHOLD
-    print(f"[senyum-yolo] happy_conf={happy_conf:.3f} threshold={_EMOTION_CONF_THRESHOLD} tersenyum={tersenyum} detections={all_detections}")
-    return tersenyum, {
-        "method": "yolo_emotion",
-        "happy_conf": round(happy_conf, 3),
-        "threshold": _EMOTION_CONF_THRESHOLD,
-        "tersenyum": tersenyum,
-    }
-
-
-
-def kenali_wajah(image_bytes: bytes) -> int | None:
-    """kenali wajah dari bytes gambar, balikin ID mahasiswa atau None kalo ga ketemu"""
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    gambar_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    if gambar_bgr is None:
-        return None
-
-    wajah_crop = deteksi_dan_crop_wajah(gambar_bgr)
-
-    if wajah_crop.size == 0:
-        return None
-
-    # pastikan faces_db ada dan punya minimal 1 subfolder mahasiswa
+def _ada_wajah_terdaftar() -> bool:
+    """cek faces_db punya minimal 1 subfolder mahasiswa"""
     if not os.path.exists(FACES_DB_DIR):
-        return None
-    ada_folder = any(
+        return False
+    return any(
         os.path.isdir(os.path.join(FACES_DB_DIR, d))
         for d in os.listdir(FACES_DB_DIR)
     )
-    if not ada_folder:
-        return None
 
-    gambar_rgb = cv2.cvtColor(gambar_bgr, cv2.COLOR_BGR2RGB)
 
+def _kenali_crop(wajah_bgr: np.ndarray) -> tuple[int | None, float | None]:
+    """kenali satu crop wajah → (mahasiswa_id, jarak) atau (None, jarak/None)"""
+    if wajah_bgr is None or wajah_bgr.size == 0:
+        return None, None
+
+    wajah_rgb = cv2.cvtColor(wajah_bgr, cv2.COLOR_BGR2RGB)
     try:
-        # threshold=1.0 biar semua kandidat keluar, nanti kita filter sendiri
+        # detector_backend="skip" karena crop sudah pasti wajah dari YOLO
         hasil = DeepFace.find(
-            img_path=gambar_rgb,
+            img_path=wajah_rgb,
             db_path=FACES_DB_DIR,
             model_name="Facenet512",
-            detector_backend="opencv",
+            detector_backend="skip",
             distance_metric="cosine",
-            threshold=1.0,
+            threshold=1.0,           # ambil semua kandidat, filter manual di bawah
             enforce_detection=False,
             silent=True,
         )
-
-        if not hasil or hasil[0].empty:
-            print("[kenali] DeepFace.find() kosong — tidak ada kandidat")
-            return None
-
-        df = hasil[0]
-        col_dist = next((c for c in df.columns if "distance" in c.lower()), df.columns[-1])
-        df = df.sort_values(col_dist)
-
-        baris_terbaik = df.iloc[0]
-        jarak_terbaik = float(baris_terbaik[col_dist])
-        path_cocok    = baris_terbaik["identity"]
-
-        print(f"[kenali] jarak terbaik = {jarak_terbaik:.4f} (tolerance = {FACE_MATCH_TOLERANCE}) — {path_cocok}")
-
-        if jarak_terbaik > FACE_MATCH_TOLERANCE:
-            print(f"[kenali] TOLAK — jarak {jarak_terbaik:.4f} > {FACE_MATCH_TOLERANCE}")
-            return None
-
-        path_cocok = baris_terbaik["identity"]
-        rel_path = os.path.relpath(path_cocok, FACES_DB_DIR)
-        mahasiswa_id = int(rel_path.split(os.sep)[0])
-        return mahasiswa_id
-
     except Exception:
-        return None
+        return None, None
+
+    if not hasil or hasil[0].empty:
+        return None, None
+
+    df = hasil[0]
+    col_dist = next((c for c in df.columns if "distance" in c.lower()), df.columns[-1])
+    baris = df.sort_values(col_dist).iloc[0]
+    jarak = float(baris[col_dist])
+
+    if jarak > FACE_MATCH_TOLERANCE:
+        return None, jarak
+
+    rel_path = os.path.relpath(baris["identity"], FACES_DB_DIR)
+    mahasiswa_id = int(rel_path.split(os.sep)[0])
+    return mahasiswa_id, jarak
+
+
+def kenali_banyak_wajah(image_bytes: bytes) -> list[dict]:
+    """
+    deteksi SEMUA wajah di satu frame (grid peserta meeting) lalu kenali tiap wajah.
+    return list: [{box, mahasiswa_id, jarak}, ...]
+    box yang tak dikenali tetap dikembalikan dengan mahasiswa_id=None.
+    """
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    gambar_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if gambar_bgr is None:
+        return []
+
+    kotak = deteksi_kotak_wajah(gambar_bgr)
+    if not kotak:
+        return []
+
+    db_siap = _ada_wajah_terdaftar()
+
+    hasil = []
+    for box in kotak:
+        if db_siap:
+            crop = _crop_box(gambar_bgr, box)
+            mahasiswa_id, jarak = _kenali_crop(crop)
+        else:
+            mahasiswa_id, jarak = None, None
+        hasil.append({"box": box, "mahasiswa_id": mahasiswa_id, "jarak": jarak})
+
+    dikenali = sum(1 for h in hasil if h["mahasiswa_id"] is not None)
+    print(f"[scan] {len(kotak)} wajah terdeteksi, {dikenali} dikenali")
+    return hasil

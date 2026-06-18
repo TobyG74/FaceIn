@@ -1,385 +1,291 @@
-import { useRef, useState, useEffect } from 'react'
-import Webcam from 'react-webcam'
-import { scanAbsensi, kenaliWajah, cekSenyum } from '../api'
-import axios from 'axios'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { format } from 'date-fns'
 import { id as localeId } from 'date-fns/locale'
-
-const API_URL      = 'http://localhost:8000'
-const INTERVAL_BOX = 50   // ms polling kotak deteksi
-const COOLDOWN_MS  = 5000  // ms cooldown abis absensi
+import {
+  getSesiList, buatSesi, scanSesi, getKehadiranSesi,
+} from '../api'
 
 export default function HalamanAbsensi() {
-  const webcamRef = useRef(null)
-  const canvasRef = useRef(null)
+  const videoRef   = useRef(null)
+  const canvasRef  = useRef(null)   // overlay kotak wajah
+  const streamRef  = useRef(null)
 
-  const [fase,             setFase]             = useState('idle')
-  const [mahasiswaDikenal, setMahasiswaDikenal] = useState(null)
-  const [hasil,            setHasil]            = useState(null)
-  const [sisaCooldown,     setSisaCooldown]      = useState(0)
-  const [pesanGagal,       setPesanGagal]        = useState(null)
-  const [tersenyum,        setTersenyum]         = useState(null)
-  const [debugInfo,        setDebugInfo]         = useState(null)
+  const [sesiList,     setSesiList]   = useState([])
+  const [sesiId,       setSesiId]     = useState('')
+  const [namaSesiBaru, setNamaSesiBaru] = useState('')
 
-  const faseRef          = useRef('idle')
-  const sedangSenyum     = useRef(false)
-  const screenshotRef    = useRef(null)
-  const riwayatSenyum    = useRef([])
-  const cooldownHingga   = useRef(null)
-  const senyumTimeoutRef = useRef(null)
+  const [berbagi,   setBerbagi]   = useState(false)
+  const [scanning,  setScanning]  = useState(false)
+  const [hasilScan, setHasilScan] = useState(null)
+  const [kehadiran, setKehadiran] = useState([])
+  const [pesan,     setPesan]     = useState(null)
 
-  useEffect(() => { faseRef.current = fase }, [fase])
+  const sesiAktif = sesiList.find(s => String(s.id) === String(sesiId)) || null
 
-  // hitung mundur cooldown
+  const muatSesi = useCallback(async () => {
+    const { data } = await getSesiList()
+    setSesiList(data)
+    return data
+  }, [])
+
+  useEffect(() => { muatSesi() }, [muatSesi])
+
+  // muat daftar hadir tiap ganti sesi
   useEffect(() => {
-    const timer = setInterval(() => {
-      if (!cooldownHingga.current) return
-      const sisa = Math.ceil((cooldownHingga.current - Date.now()) / 1000)
-      if (sisa > 0) {
-        setSisaCooldown(sisa)
-      } else {
-        cooldownHingga.current = null
-        setSisaCooldown(0)
-        setFase('idle')
+    if (!sesiId) { setKehadiran([]); return }
+    getKehadiranSesi(sesiId).then(({ data }) => setKehadiran(data)).catch(() => {})
+  }, [sesiId])
+
+  // bersihkan stream pas unmount
+  useEffect(() => () => hentikanBerbagi(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleBuatSesi = async () => {
+    if (!namaSesiBaru.trim()) return
+    try {
+      const { data } = await buatSesi({ nama: namaSesiBaru.trim() })
+      setNamaSesiBaru('')
+      await muatSesi()
+      setSesiId(String(data.id))
+      setHasilScan(null)
+    } catch {
+      setPesan('Gagal membuat sesi.')
+    }
+  }
+
+  const mulaiBerbagi = async () => {
+    setPesan(null)
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 15 },
+        audio: false,
+      })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play().catch(() => {})
       }
-    }, 200)
-    return () => clearInterval(timer)
-  }, [])
+      // user menghentikan share lewat UI browser
+      stream.getVideoTracks()[0].addEventListener('ended', hentikanBerbagi)
+      setBerbagi(true)
+    } catch {
+      setPesan('Gagal mengakses layar. Pilih window/tab Google Meet atau Zoom saat diminta.')
+    }
+  }
 
-  // kotak deteksi wajah real-time
-  useEffect(() => {
-    let busy = false
-    const interval = setInterval(async () => {
-      if (busy || !webcamRef.current) return
-      busy = true
-      try {
-        const shot = webcamRef.current.getScreenshot()
-        if (!shot) return
+  const hentikanBerbagi = () => {
+    const stream = streamRef.current
+    if (stream) stream.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    bersihkanOverlay()
+    setBerbagi(false)
+  }
 
-        const res  = await fetch(shot)
-        const blob = await res.blob()
-        const fd   = new FormData()
-        fd.append('foto', blob, 'frame.jpg')
-        const { data } = await axios.post(`${API_URL}/absensi/deteksi`, fd)
+  const bersihkanOverlay = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+  }
 
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const video = webcamRef.current?.video
-        const imgW  = video?.videoWidth  || 640
-        const imgH  = video?.videoHeight || 480
-        if (canvas.width  !== imgW) canvas.width  = imgW
-        if (canvas.height !== imgH) canvas.height = imgH
+  const gambarOverlay = (wajah) => {
+    const canvas = canvasRef.current
+    const video  = videoRef.current
+    if (!canvas || !video) return
 
-        const ctx = canvas.getContext('2d')
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
+    const W = video.videoWidth  || 1280
+    const H = video.videoHeight || 720
+    if (canvas.width  !== W) canvas.width  = W
+    if (canvas.height !== H) canvas.height = H
 
-        const f = faseRef.current
-        const warna = f === 'minta_senyum' ? '#f59e0b'
-          : f === 'mencatat'              ? '#3b82f6'
-          : '#22c55e'
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, W, H)
 
-        data.kotak?.forEach(k => {
-          // sedikit padding simetris (5% dari ukuran kotak) biar wajah ga kepotong mepet
-          const padX = k.w * 0.05
-          const padY = k.h * 0.05
-          const bx = k.x - padX
-          const by = k.y - padY
-          const bw = k.w + padX * 2
-          const bh = k.h + padY * 2
+    wajah.forEach(w => {
+      const { x, y, w: bw, h: bh } = w.box
+      const warna = w.dikenali ? (w.baru ? '#22c55e' : '#3b82f6') : '#ef4444'
+      const label = w.dikenali ? w.mahasiswa.nama : 'Tidak dikenali'
 
-          ctx.strokeStyle = warna
-          ctx.lineWidth   = 3
-          ctx.strokeRect(bx, by, bw, bh)
-          ctx.fillStyle   = warna + '15'
-          ctx.fillRect(bx, by, bw, bh)
+      ctx.strokeStyle = warna
+      ctx.lineWidth   = Math.max(2, Math.round(W / 480))
+      ctx.strokeRect(x, y, bw, bh)
 
-          if (k.conf !== undefined) {
-            const label = `Wajah ${Math.round(k.conf * 100)}%`
-            ctx.font    = 'bold 13px sans-serif'
-            const tw    = ctx.measureText(label).width
-            ctx.fillStyle = warna
-            ctx.fillRect(bx, by - 20, tw + 8, 20)
-            ctx.fillStyle = '#fff'
-            ctx.fillText(label, bx + 4, by - 5)
-          }
-        })
-      } catch { /* silent */ } finally { busy = false }
-    }, INTERVAL_BOX)
-    return () => clearInterval(interval)
-  }, [])
+      ctx.font = `bold ${Math.max(12, Math.round(W / 70))}px sans-serif`
+      const tw = ctx.measureText(label).width
+      const th = Math.max(16, Math.round(W / 55))
+      ctx.fillStyle = warna
+      ctx.fillRect(x, y - th, tw + 10, th)
+      ctx.fillStyle = '#fff'
+      ctx.fillText(label, x + 5, y - th * 0.25)
+    })
+  }
 
-  // poll senyum (aktif pas fase minta_senyum, butuh 3 frame berturut-turut)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (faseRef.current !== 'minta_senyum') return
-      if (sedangSenyum.current || !webcamRef.current) return
-
-      sedangSenyum.current = true
-      try {
-        const shot = webcamRef.current.getScreenshot()
-        if (!shot) return
-        const res  = await fetch(shot)
-        const blob = await res.blob()
-        const fd   = new FormData()
-        fd.append('foto', blob, 'frame.jpg')
-        const { data } = await cekSenyum(fd)
-
-        setTersenyum(data.tersenyum)
-        setDebugInfo(data.debug)
-
-        riwayatSenyum.current = [...riwayatSenyum.current, data.tersenyum].slice(-5)
-        const konsekutif = riwayatSenyum.current.length >= 3 &&
-          riwayatSenyum.current.slice(-3).every(v => v === true)
-
-        if (konsekutif) {
-          riwayatSenyum.current = []
-          clearTimeout(senyumTimeoutRef.current)
-          await eksekusiAbsensi()
-        }
-      } catch { /* silent */ } finally { sedangSenyum.current = false }
-    }, 200)
-    return () => clearInterval(interval)
-  }, [])
+  const ambilFrameBlob = () => new Promise((resolve) => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return resolve(null)
+    const c = document.createElement('canvas')
+    c.width  = video.videoWidth
+    c.height = video.videoHeight
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height)
+    c.toBlob(blob => resolve(blob), 'image/jpeg', 0.9)
+  })
 
   const handleScan = async () => {
-    if (!webcamRef.current || faseRef.current !== 'idle') return
-    setPesanGagal(null)
-    setHasil(null)
-    setFase('kenali')
-
+    if (!sesiId) { setPesan('Pilih atau buat sesi dulu.'); return }
+    if (!berbagi) { setPesan('Bagikan layar meeting dulu.'); return }
+    setPesan(null)
+    setScanning(true)
     try {
-      const shot = webcamRef.current.getScreenshot()
-      if (!shot) throw new Error('Kamera tidak tersedia')
-
-      screenshotRef.current = shot
-
-      const res  = await fetch(shot)
-      const blob = await res.blob()
-      const fd   = new FormData()
-      fd.append('foto', blob, 'kenali.jpg')
-      const { data } = await kenaliWajah(fd)
-
-      if (!data.dikenali) {
-        setPesanGagal('Wajah tidak dikenali. Pastikan wajah terlihat jelas.')
-        setFase('idle')
-        return
-      }
-
-      setMahasiswaDikenal(data.mahasiswa)
-      riwayatSenyum.current = []
-      setTersenyum(null)
-      setFase('minta_senyum')
-
-      // Reset ke idle kalo senyum gak kedeteksi dalam 30 detik
-      senyumTimeoutRef.current = setTimeout(() => {
-        if (faseRef.current === 'minta_senyum') {
-          riwayatSenyum.current = []
-          setMahasiswaDikenal(null)
-          setTersenyum(null)
-          setPesanGagal('Verifikasi senyum habis waktu. Silakan coba lagi.')
-          setFase('idle')
-        }
-      }, 30000)
+      const blob = await ambilFrameBlob()
+      if (!blob) { setPesan('Frame tidak tersedia, coba lagi.'); return }
+      const fd = new FormData()
+      fd.append('foto', blob, 'frame.jpg')
+      const { data } = await scanSesi(sesiId, fd)
+      setHasilScan(data)
+      gambarOverlay(data.wajah || [])
+      // refresh daftar hadir + counter sesi
+      const [{ data: kh }] = await Promise.all([getKehadiranSesi(sesiId)])
+      setKehadiran(kh)
+      muatSesi()
     } catch {
-      setPesanGagal('Terjadi kesalahan, coba lagi.')
-      setFase('idle')
-    }
-  }
-
-  const eksekusiAbsensi = async () => {
-    setFase('mencatat')
-    try {
-      const shot = screenshotRef.current
-      if (!shot) throw new Error('Screenshot tidak tersedia')
-
-      const res  = await fetch(shot)
-      const blob = await res.blob()
-      const fd   = new FormData()
-      fd.append('foto', blob, 'absensi.jpg')
-      const { data } = await scanAbsensi(fd)
-      setHasil(data)
-    } catch {
-      setHasil({ berhasil: false, pesan: 'Terjadi kesalahan saat mencatat absensi.' })
+      setPesan('Gagal melakukan scan. Pastikan backend berjalan.')
     } finally {
-      setMahasiswaDikenal(null)
-      screenshotRef.current = null
-      riwayatSenyum.current = []
-      cooldownHingga.current = Date.now() + COOLDOWN_MS
-      setFase('cooldown')
+      setScanning(false)
     }
   }
 
-  const formatJam = (jamStr) => {
-    if (!jamStr) return '-'
-    return format(new Date(jamStr), 'HH:mm:ss, dd MMMM yyyy', { locale: localeId })
-  }
-
-  const tipeBadge = (tipe) => {
-    if (tipe === 'masuk')  return 'Absen Masuk'
-    if (tipe === 'keluar') return 'Absen Keluar'
-    return 'Info'
-  }
-
-  const tombolDisabled = fase !== 'idle'
-
-  // render konten panel kanan sesuai fase
-  const renderKanan = () => {
-    if (fase === 'kenali') return (
-      <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-        <i className="fa-solid fa-magnifying-glass fa-2x" style={{ color: '#3b82f6', marginBottom: '1rem' }} />
-        <div style={{ fontWeight: 600 }}>Mengenali wajah...</div>
-      </div>
-    )
-
-    if (fase === 'minta_senyum') return (
-      <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-        <i className="fa-solid fa-face-smile fa-2x" style={{ color: '#f59e0b', marginBottom: '1rem' }} />
-        <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#f59e0b', marginBottom: '0.5rem' }}>
-          Tersenyumlah untuk verifikasi
-        </div>
-
-        {/* dot status senyum */}
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-          background: '#f3f4f6', borderRadius: '20px', padding: '0.3rem 0.8rem',
-          fontSize: '0.8rem', marginBottom: '0.75rem'
-        }}>
-          <span style={{
-            width: 10, height: 10, borderRadius: '50%', display: 'inline-block',
-            background: tersenyum === null ? '#d1d5db' : tersenyum ? '#22c55e' : '#9ca3af'
-          }} />
-          {tersenyum === null ? 'Mendeteksi...' : tersenyum ? '✓ Senyum terdeteksi!' : 'Tersenyumlah...'}
-        </div>
-
-        {mahasiswaDikenal && (
-          <div style={{ marginTop: '0.25rem', padding: '0.75rem', background: '#f3f4f6', borderRadius: '8px' }}>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{mahasiswaDikenal.nama}</div>
-            {mahasiswaDikenal.npm && (
-              <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>{mahasiswaDikenal.npm}</div>
-            )}
-          </div>
-        )}
-
-        <div style={{ color: '#9ca3af', fontSize: '0.8rem', marginTop: '1rem' }}>
-          <i className="fa-solid fa-circle-info" style={{ marginRight: '0.3rem' }} />
-          Tunjukkan senyum lebar ke kamera
-        </div>
-
-        <button
-          className="btn"
-          onClick={() => {
-            clearTimeout(senyumTimeoutRef.current)
-            riwayatSenyum.current = []
-            setMahasiswaDikenal(null)
-            setTersenyum(null)
-            setFase('idle')
-          }}
-          style={{ marginTop: '1rem', fontSize: '0.85rem', padding: '0.4rem 1rem', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', color: '#6b7280' }}
-        >
-          <i className="fa-solid fa-xmark" style={{ marginRight: '0.3rem' }} />Batal
-        </button>
-      </div>
-    )
-
-    if (fase === 'mencatat') return (
-      <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-        <i className="fa-solid fa-spinner fa-spin fa-2x" style={{ color: '#3b82f6', marginBottom: '1rem' }} />
-        <div style={{ fontWeight: 600 }}>Mencatat kehadiran...</div>
-      </div>
-    )
-
-    if (hasil) return (
-      <div className={`result-card ${hasil.berhasil ? 'sukses' : 'gagal'}`}>
-        {hasil.tipe && (
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: hasil.tipe === 'masuk' ? '#16a34a' : '#dc2626', marginBottom: '0.5rem' }}>
-            {tipeBadge(hasil.tipe)}
-          </div>
-        )}
-        {hasil.mahasiswa && (
-          <div className="result-nama">{hasil.mahasiswa.nama}</div>
-        )}
-        {hasil.mahasiswa?.jabatan && (
-          <div style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '0.5rem' }}>{hasil.mahasiswa.jabatan}</div>
-        )}
-        <div style={{ fontSize: '0.875rem' }}>{hasil.pesan}</div>
-        {hasil.jam && (
-          <div style={{ color: '#9ca3af', fontSize: '0.8rem', marginTop: '0.5rem' }}>{formatJam(hasil.jam)}</div>
-        )}
-        {fase === 'cooldown' && sisaCooldown > 0 && (
-          <div style={{ color: '#f59e0b', marginTop: '0.75rem', fontSize: '0.8rem' }}>
-            Scan berikutnya dalam {sisaCooldown}s
-          </div>
-        )}
-      </div>
-    )
-
-    if (pesanGagal) return (
-      <div className="result-card gagal">
-        <i className="fa-solid fa-circle-xmark" style={{ color: '#dc2626', marginRight: '0.4rem' }} />
-        {pesanGagal}
-      </div>
-    )
-
-    return (
-      <div className="alert alert-info">
-        <i className="fa-solid fa-lightbulb" style={{ marginRight: '0.4rem' }} />
-        Arahkan wajah ke kamera lalu tekan <b>Scan Wajah</b>.
-      </div>
-    )
-  }
+  const formatJam = (dt) => dt ? format(new Date(dt), 'HH:mm:ss', { locale: localeId }) : '-'
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '1.5rem', color: '#1e3a8a' }}>
-        <i className="fa-solid fa-camera" style={{ marginRight: '0.5rem' }} />FaceIn
+      <h1 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.4rem', color: '#1e3a8a' }}>
+        <i className="fa-solid fa-camera" style={{ marginRight: '0.5rem' }} />FaceIn — Absensi Meeting
       </h1>
+      <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+        Bagikan window Google Meet / Zoom, lalu tekan <b>Scan Kehadiran</b> untuk mengenali semua peserta yang tampil.
+      </p>
+
+      {/* pilih / buat sesi */}
+      <div className="card">
+        <div className="card-title"><i className="fa-solid fa-calendar-check" style={{ marginRight: '0.5rem' }} />Sesi Meeting</div>
+        <div className="grid-2">
+          <div className="form-group">
+            <label className="form-label">Pilih Sesi</label>
+            <select className="form-input" value={sesiId} onChange={(e) => { setSesiId(e.target.value); setHasilScan(null) }}>
+              <option value="">— Pilih sesi —</option>
+              {sesiList.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.nama} ({format(new Date(s.tanggal), 'dd MMM yyyy', { locale: localeId })}) — {s.jumlah_hadir} hadir
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Atau Buat Sesi Baru</label>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                className="form-input"
+                placeholder="mis. Pertemuan 5 - Basis Data"
+                value={namaSesiBaru}
+                onChange={(e) => setNamaSesiBaru(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleBuatSesi()}
+              />
+              <button className="btn btn-primary" onClick={handleBuatSesi} style={{ whiteSpace: 'nowrap' }}>
+                <i className="fa-solid fa-plus" style={{ marginRight: '0.3rem' }} />Buat
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="grid-2">
-        {/* panel kamera */}
+        {/* panel layar */}
         <div className="card">
-          <div className="card-title">
-            <i className="fa-solid fa-video" style={{ marginRight: '0.5rem' }} />Kamera
-          </div>
-          <div className="webcam-container">
-            <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '480px', lineHeight: 0 }}>
-              <Webcam
-                ref={webcamRef}
-                screenshotFormat="image/jpeg"
-                className="webcam-video"
-                mirrored={true}
-                forceScreenshotSourceSize={true}
-              />
-              <canvas
-                ref={canvasRef}
-                style={{
-                  position: 'absolute', top: 0, left: 0,
-                  width: '100%', height: '100%',
-                  pointerEvents: 'none',
-                }}
-              />
-            </div>
+          <div className="card-title"><i className="fa-solid fa-display" style={{ marginRight: '0.5rem' }} />Layar Meeting</div>
 
+          <div style={{ position: 'relative', width: '100%', background: '#0f172a', borderRadius: 8, overflow: 'hidden', lineHeight: 0, minHeight: 220 }}>
+            <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', display: 'block' }} />
+            <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+            {!berbagi && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', gap: '0.5rem' }}>
+                <i className="fa-solid fa-desktop fa-2x" />
+                <span style={{ fontSize: '0.85rem' }}>Layar belum dibagikan</span>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+            {!berbagi ? (
+              <button className="btn btn-primary" onClick={mulaiBerbagi} style={{ flex: 1, padding: '0.7rem' }}>
+                <i className="fa-solid fa-share-from-square" style={{ marginRight: '0.4rem' }} />Bagikan Layar
+              </button>
+            ) : (
+              <button className="btn btn-danger" onClick={hentikanBerbagi} style={{ padding: '0.7rem 1rem' }}>
+                <i className="fa-solid fa-stop" style={{ marginRight: '0.4rem' }} />Stop
+              </button>
+            )}
             <button
               className="btn btn-primary"
               onClick={handleScan}
-              disabled={tombolDisabled}
-              style={{ width: '100%', maxWidth: '480px', padding: '0.75rem', marginTop: '0.75rem' }}
+              disabled={!berbagi || scanning || !sesiId}
+              style={{ flex: 1, padding: '0.7rem' }}
             >
-              {fase === 'kenali'   ? <><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '0.4rem' }} />Mengenali...</>
-              : fase === 'minta_senyum' ? <><i className="fa-solid fa-face-smile" style={{ marginRight: '0.4rem' }} />Menunggu senyuman...</>
-              : fase === 'mencatat'    ? <><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '0.4rem' }} />Mencatat...</>
-              : fase === 'cooldown'    ? <><i className="fa-solid fa-hourglass-half" style={{ marginRight: '0.4rem' }} />Tunggu {sisaCooldown}s...</>
-              : <><i className="fa-solid fa-camera" style={{ marginRight: '0.4rem' }} />Scan Wajah</>}
+              {scanning
+                ? <><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '0.4rem' }} />Memindai...</>
+                : <><i className="fa-solid fa-magnifying-glass" style={{ marginRight: '0.4rem' }} />Scan Kehadiran</>}
             </button>
           </div>
+
+          {pesan && (
+            <div className="alert alert-info" style={{ marginTop: '0.75rem' }}>
+              <i className="fa-solid fa-circle-info" style={{ marginRight: '0.4rem' }} />{pesan}
+            </div>
+          )}
         </div>
 
         {/* panel hasil */}
         <div className="card">
           <div className="card-title">
-            <i className="fa-solid fa-clipboard-list" style={{ marginRight: '0.5rem' }} />Hasil Absensi
+            <i className="fa-solid fa-clipboard-list" style={{ marginRight: '0.5rem' }} />
+            Kehadiran {sesiAktif ? `— ${sesiAktif.nama}` : ''}
           </div>
-          {renderKanan()}
+
+          {hasilScan && (
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.9rem', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Wajah', val: hasilScan.jumlah_wajah, c: '#e0f2fe', t: '#0369a1' },
+                { label: 'Dikenali', val: hasilScan.jumlah_dikenali, c: '#dbeafe', t: '#1d4ed8' },
+                { label: 'Hadir baru', val: hasilScan.hadir_baru, c: '#dcfce7', t: '#15803d' },
+              ].map(s => (
+                <div key={s.label} style={{ flex: 1, minWidth: 80, background: s.c, color: s.t, borderRadius: 8, padding: '0.6rem', textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{s.val}</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!sesiId ? (
+            <p style={{ color: '#6b7280' }}>Pilih sesi untuk melihat daftar kehadiran.</p>
+          ) : kehadiran.length === 0 ? (
+            <p style={{ color: '#6b7280' }}>Belum ada peserta tercatat hadir di sesi ini.</p>
+          ) : (
+            <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+              <table className="tabel">
+                <thead><tr><th>#</th><th>Nama</th><th>NPM</th><th>Jam Hadir</th></tr></thead>
+                <tbody>
+                  {kehadiran.map((a, i) => (
+                    <tr key={a.id}>
+                      <td>{i + 1}</td>
+                      <td style={{ fontWeight: 600 }}>{a.mahasiswa.nama}</td>
+                      <td>{a.mahasiswa.npm}</td>
+                      <td>{formatJam(a.waktu_hadir)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

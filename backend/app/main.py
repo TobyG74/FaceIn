@@ -5,12 +5,12 @@ import os
 
 from app.config import ALLOWED_ORIGINS, FACES_DB_DIR
 from app.models.database import init_db
-from app.routers import mahasiswa, absensi
+from app.routers import mahasiswa, absensi, sesi
 
 app = FastAPI(
     title="FaceIn",
-    description="Absensi otomatis menggunakan YOLO + face recognition",
-    version="1.0.0",
+    description="Absensi meeting (Google Meet/Zoom) — deteksi banyak wajah sekaligus pakai YOLO + face recognition",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -25,6 +25,7 @@ os.makedirs(FACES_DB_DIR, exist_ok=True)
 app.mount("/faces_db", StaticFiles(directory=FACES_DB_DIR), name="faces_db")
 
 app.include_router(mahasiswa.router)
+app.include_router(sesi.router)
 app.include_router(absensi.router)
 
 
