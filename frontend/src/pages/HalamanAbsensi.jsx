@@ -9,12 +9,15 @@ export default function HalamanAbsensi() {
   const videoRef   = useRef(null)
   const canvasRef  = useRef(null)   // overlay kotak wajah
   const streamRef  = useRef(null)
+  const scanBusy   = useRef(false)  // cegah scan tumpang-tindih saat mode otomatis
 
   const [sesiList,     setSesiList]   = useState([])
   const [sesiId,       setSesiId]     = useState('')
   const [namaSesiBaru, setNamaSesiBaru] = useState('')
 
   const [berbagi,   setBerbagi]   = useState(false)
+  const [otomatis,  setOtomatis]  = useState(true)   // scan berkala otomatis
+  const [interval_, setInterval_] = useState(4)      // detik antar-scan
   const [scanning,  setScanning]  = useState(false)
   const [hasilScan, setHasilScan] = useState(null)
   const [kehadiran, setKehadiran] = useState([])
@@ -130,29 +133,39 @@ export default function HalamanAbsensi() {
     c.toBlob(blob => resolve(blob), 'image/jpeg', 0.9)
   })
 
-  const handleScan = async () => {
-    if (!sesiId) { setPesan('Pilih atau buat sesi dulu.'); return }
-    if (!berbagi) { setPesan('Bagikan layar meeting dulu.'); return }
-    setPesan(null)
+  const handleScan = useCallback(async ({ diam = false } = {}) => {
+    if (!sesiId)  { if (!diam) setPesan('Pilih atau buat sesi dulu.');  return }
+    if (!berbagi) { if (!diam) setPesan('Bagikan layar meeting dulu.'); return }
+    if (scanBusy.current) return              // scan sebelumnya belum selesai
+    scanBusy.current = true
+    if (!diam) setPesan(null)
     setScanning(true)
     try {
       const blob = await ambilFrameBlob()
-      if (!blob) { setPesan('Frame tidak tersedia, coba lagi.'); return }
+      if (!blob) { if (!diam) setPesan('Frame tidak tersedia, coba lagi.'); return }
       const fd = new FormData()
       fd.append('foto', blob, 'frame.jpg')
       const { data } = await scanSesi(sesiId, fd)
       setHasilScan(data)
       gambarOverlay(data.wajah || [])
       // refresh daftar hadir + counter sesi
-      const [{ data: kh }] = await Promise.all([getKehadiranSesi(sesiId)])
+      const { data: kh } = await getKehadiranSesi(sesiId)
       setKehadiran(kh)
       muatSesi()
     } catch {
-      setPesan('Gagal melakukan scan. Pastikan backend berjalan.')
+      if (!diam) setPesan('Gagal melakukan scan. Pastikan backend berjalan.')
     } finally {
+      scanBusy.current = false
       setScanning(false)
     }
-  }
+  }, [sesiId, berbagi, muatSesi])
+
+  // mode otomatis: scan berkala selama berbagi layar (mirip screen-record)
+  useEffect(() => {
+    if (!otomatis || !berbagi || !sesiId) return
+    const id = setInterval(() => handleScan({ diam: true }), Math.max(1, interval_) * 1000)
+    return () => clearInterval(id)
+  }, [otomatis, berbagi, sesiId, interval_, handleScan])
 
   const formatJam = (dt) => dt ? format(new Date(dt), 'HH:mm:ss', { locale: localeId }) : '-'
 
@@ -162,7 +175,8 @@ export default function HalamanAbsensi() {
         <i className="fa-solid fa-camera" style={{ marginRight: '0.5rem' }} />FaceIn — Absensi Meeting
       </h1>
       <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
-        Bagikan window Google Meet / Zoom, lalu tekan <b>Scan Kehadiran</b> untuk mengenali semua peserta yang tampil.
+        Bagikan window Google Meet / Zoom. Dengan <b>mode otomatis</b>, sistem memindai layar berkala
+        (seperti screen-record) dan mencatat setiap mahasiswa yang membuka kamera sebagai hadir.
       </p>
 
       {/* pilih / buat sesi */}
@@ -226,14 +240,36 @@ export default function HalamanAbsensi() {
             )}
             <button
               className="btn btn-primary"
-              onClick={handleScan}
+              onClick={() => handleScan()}
               disabled={!berbagi || scanning || !sesiId}
               style={{ flex: 1, padding: '0.7rem' }}
             >
               {scanning
                 ? <><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '0.4rem' }} />Memindai...</>
-                : <><i className="fa-solid fa-magnifying-glass" style={{ marginRight: '0.4rem' }} />Scan Kehadiran</>}
+                : <><i className="fa-solid fa-magnifying-glass" style={{ marginRight: '0.4rem' }} />Scan Manual</>}
             </button>
+          </div>
+
+          {/* kontrol mode otomatis */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={otomatis} onChange={(e) => setOtomatis(e.target.checked)} />
+              Scan otomatis
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#6b7280' }}>
+              tiap
+              <input
+                type="number" min={1} max={60} value={interval_}
+                onChange={(e) => setInterval_(Number(e.target.value) || 1)}
+                style={{ width: 56, padding: '0.25rem 0.4rem', border: '1px solid #e2e8f0', borderRadius: 6 }}
+              />
+              detik
+            </label>
+            {otomatis && berbagi && sesiId && (
+              <span style={{ fontSize: '0.8rem', color: '#15803d', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <i className="fa-solid fa-circle fa-fade" style={{ fontSize: '0.6rem' }} />Merekam absensi…
+              </span>
+            )}
           </div>
 
           {pesan && (
